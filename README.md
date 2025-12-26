@@ -14,6 +14,18 @@ You can also run the built EXE directly: `dist\KloakNode.exe`
 
 That's it! The node will start running on your machine.
 
+## Networking (Port Forwarding)
+
+If you want wallets on the **public internet** to connect to your node, you must make your WebSocket port reachable (default: TCP `8765`).
+
+- **Same PC (localhost)**: no port forwarding needed.
+- **Same home LAN/Wi-Fi**: usually only **Windows Firewall** inbound allow for TCP `8765`.
+- **Public node (anyone can connect)**: you typically need **both**:
+    - Windows Firewall: allow inbound TCP `8765` to the node machine
+    - Router/NAT: port-forward `8765` from WAN → your node machine’s LAN IP
+
+If you’re behind **CGNAT**, router port forwarding won’t work; you’ll need a VPS/tunnel/reverse-proxy approach.
+
 ### What are the .bat files for?
 
 - `install_kloak.bat`: sets up a local venv + installs dependencies for running from source and/or building.
