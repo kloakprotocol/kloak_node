@@ -4,46 +4,15 @@
 
 ## Quick Start (Windows)
 
-1. **Download** the latest release ZIP
-2. **Extract** to any folder
+1. Install Python (recommended: 3.11 or 3.12)
+2. Clone/download this repo
 3. **Double-click** `install_kloak.bat` (one-time setup)
 4. Build the EXE: `python build_exe.py`
 5. Run: `run_kloak.bat` (recommended)
 
-If you prefer, you can also run the EXE directly: `dist\KloakNode.exe`
+You can also run the built EXE directly: `dist\KloakNode.exe`
 
 That's it! The node will start running on your machine.
-
-## Recommended: Build Your Own EXE (No Signing Needed)
-
-If you want to avoid Windows SmartScreen/code-signing headaches, the simplest approach is:
-clone/download this repo and build the executable locally.
-
-### Steps
-
-1. Install Python (recommended: 3.11 or 3.12)
-2. Open a terminal in this folder
-3. Run the installer (creates `.venv` and installs deps):
-
-```bat
-install_kloak.bat
-```
-
-4. Build the standalone EXE (PyInstaller):
-
-```bat
-python build_exe.py
-```
-
-By default, `build_exe.py` builds a **one-file** EXE (no prompt). The output will be:
-
-- `dist\KloakNode.exe`
-
-To choose build mode interactively:
-
-```bat
-python build_exe.py --interactive
-```
 
 ### What are the .bat files for?
 
@@ -52,75 +21,67 @@ python build_exe.py --interactive
 
 ## Overview
 
-Kloak is a novel fungibility layer built on Kaspa - a decentralized, non-custodial payjoin coordinator that transforms regular payments into privacy-enhanced transactions.
+Kloak is a novel fungibility layer built on Kaspa - a decentralized, censorship resistant, non-custodial payjoin coordinator that transforms regular payments into privacy-enhanced transactions.
 
 ## Features
 
-✅ **Full Wallet Implementation**
+**Wallet Implementation**
 - 12-word BIP39 mnemonic generation
 - BIP32 hierarchical deterministic derivation
-- Kaspa bech32 address encoding (Kaspa PubKey addresses)
 - Encrypted wallet storage (Scrypt + ChaCha20-Poly1305)
 
-✅ **Wallet Integration Helpers (for external wallets)**
+**Wallet Integration Helpers (for external wallets)**
 - Single-call receiver flow: `receiver_initiate_kpp()`
 - Single-call sender flow: `sender_prepare_kpp_transaction()`
 - Kaspa-URI QR format: `kpp_payment_uri()` + `parse_kpp_payment_request()`
 
-✅ **Complete RPC Integration**
-- Connected to Kaspa network via kaspy
+**Complete RPC Integration**
+- Connected to Kaspa network via kaspy (python kaspa library)
 - Balance queries and UTXO management
 - Transaction construction and broadcasting
 
-✅ **WebSocket Server**
+**WebSocket Server**
 - End-to-end encrypted handshakes (ChaCha20-Poly1305)
 - Coordinated 2-in, 4-out payjoin transactions
 - Real-time sender/receiver coordination
 
-✅ **Node Operations**
-- Periodic pulse mechanism for node discovery
+**Node Operations**
+- Periodic kaspa network pulse mechanism for node discovery
 - Dust collection revenue model
 - Automated wallet management
 
-✅ **Operator Console**
+**Operator Console**
 - Text-based commands while node runs (`help`, `status`, `pulse`, `sweep`, etc.)
 
 ## Installation
 
-```bash
-# Install dependencies
+Everyone who runs a node builds it locally.
+
+Recommended (Windows):
+
+```bat
+install_kloak.bat
+python build_exe.py
+run_kloak.bat
+```
+
+Alternative (manual):
+
+```bat
+python -m venv .venv
+call .venv\Scripts\activate.bat
 pip install -r requirements.txt
+python build_exe.py
+run_kloak.bat
+```
 
-# Run the node
+First run will prompt you to create/load an encrypted wallet and will show a funding address/QR.
+
+To run from source instead of the EXE:
+
+```bat
+call .venv\Scripts\activate.bat
 python kloak_node.py
-```
-
-## Quick Start
-
-### 1. Create a Wallet
-
-```
-1. Create new wallet
-Enter encryption passphrase: ****
-```
-
-**⚠️ IMPORTANT:** Write down your 12-word recovery phrase!
-
-### 2. Fund the Node
-
-```
-4. Get funding address
-💰 Send KAS to: kaspa:xxxxx...
-```
-
-Send at least the configured reserve amount (default: 2 KAS) to cover pulse transaction fees.
-
-### 3. Start the Node
-
-```
-6. Start node (server + pulse)
-🚀 Starting Kloak Node...
-WebSocket server will run on port 8765
 ```
 
 ## Architecture
@@ -134,7 +95,7 @@ WebSocket server will run on port 8765
 
 **Kloak Transaction:**
 ```
-2 inputs  → 4 outputs (2 receiver addrs + sender change + dust)
+2 inputs → 4 outputs (2 receiver addrs + sender change + dust)
 ```
 
 ### Privacy Features
@@ -167,35 +128,25 @@ Flow:
 
 You can still edit `CONFIG` in the script, but runtime overrides are supported:
 
-- CLI: `--ws-port`, `--ws-bind`, `--wallet-file`, `--cli`
 - CLI: `--ws-port`, `--ws-bind`, `--wallet-file`
 - Env: `KLOAK_WS_PORT`, `KLOAK_WS_BIND`, `KLOAK_WALLET_FILE`
-
-```python
-CONFIG = {
-    "PULSE_INTERVAL_SECONDS": 21600,  # 6 hours
-    "FUND_AMOUNT_KAS": 5,             # Reserve for fees
-    "KASPA_NODE": "seeder1.kaspad.net",
-    "KASPA_RPC_PORT": 16110,
-    "WEBSOCKET_PORT": 8765,
-}
-```
 
 ## Node Discovery
 
 Kloak nodes advertise themselves by broadcasting "pulse" transactions periodically. Wallets discover nodes by:
 
 1. Scanning recent blocks for pulse transactions
-2. Extracting node metadata (WebSocket URL)
-3. Pinging top 3 most recent nodes
-4. Selecting lowest-latency node
+2. Extracting node payload data and converting it from hex to json string
+3. Kloak node pulse transactions will have specific data attached
+4. Pinging top 3 most recently pulsed nodes
+5. Selecting lowest-latency node of the 3
 
 ## Security
 
-- **Non-custodial**: Node never holds private keys
+- **Non-custodial**: Node never holds sender and receiver keys
 - **E2EE**: All coordination encrypted with ChaCha20-Poly1305
-- **Trustless**: Both parties must sign; node can't steal funds
-- **Privacy**: True amounts and participants hidden on-chain
+- **Trustless**: Both parties must sign; node cannot touch funds
+- **Privacy**: True amounts and participants completely hidden on-chain
 
 ## Revenue Model
 
@@ -207,7 +158,7 @@ Nodes earn "dust" from each transaction:
 
 ## Operator Commands (Text, While Node Runs)
 
-These are separate from the numbered startup menu above. When the node is running, you can type commands into the console (type `help` to see them):
+When the node is running, you can type commands into the console (type `help` to see them):
 
 | Command | Description |
 |---------|-------------|
@@ -257,7 +208,7 @@ qr_uri = init["qr_uri"]
 
 # 2) Show qr_uri as a QR code. Keep init["result"] for signing.
 
-# 3) When the sender sends the tx, sign input #1 and return it.
+# 3) When the sender sends the tx, receiver signs input #1 and return it.
 signed = await receiver_sign_and_return(init["result"], private_key=my_privkey)
 ```
 
@@ -328,36 +279,20 @@ await prep["finalize"](transaction_id=txid, error=None if txid else "broadcast_f
 
 ## Limitations & Disclaimers
 
-⚠️ **This is a proof-of-concept implementation:**
-
-1. **Not Production-Ready**: Requires extensive testing and auditing
+1. **Not Fully Production-Ready**: Requires extensive testing and auditing
 2. **Fee estimation is approximate**: wallets should provide their own fee policy
-3. **UTXO selection is minimal**: real wallets should do robust selection/locking
-4. **Basic UTXO Handling**: Real implementation needs better UTXO selection
-5. **Node discovery scanning can be expensive**: consider caching / limiting block scan
-
-**DO NOT USE WITH REAL FUNDS WITHOUT THOROUGH SECURITY AUDIT**
+3. **UTXO selection is minimal**: real wallets need to do proper UTXO selection
+5. **Node discovery scanning can be expensive**: consider caching / limiting block scan on wallet side
 
 ## Development Status
 
-- [x] Wallet creation with BIP39
-- [x] Encrypted storage
-- [x] RPC client integration
-- [x] WebSocket server
-- [x] E2EE handshake
-- [x] Transaction construction
-- [x] CLI interface
-- [x] Node pulse mechanism
-- [ ] UTXO selection algorithm
-- [ ] Fee estimation
-- [ ] Node discovery on-chain
-- [ ] Production-grade crypto
+> estimated ~75% node functionality/completion. Not fully production ready, need more R&D
 
 ## License
 
-Open source - free forever
+Open source - GNU 3 license
 
 ## Philosophy
 
-> "kloak is, and will forever be, open-source software, written for no other purpose than the good of humanity and in defense of the right to individual security, and as protection against violations of freedom by those seeking to control, surveil, oppress, and steal"
+> kloak is, and will forever be, open-source software, written for no other purpose than the good of humanity and in defense of the right to individual security, and as protection against violations of freedom by those seeking to control, surveil, oppress, and steal
 
