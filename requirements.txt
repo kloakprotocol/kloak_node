@@ -1,0 +1,10 @@
+kaspy==0.0.13
+websockets>=11.0
+cryptography>=41.0.0
+mnemonic>=0.20
+ecdsa>=0.18.0
+base58>=2.1.1
+qrcode>=7.4.2
+# Optional: speeds up Schnorr signing via libsecp256k1, but wheels may not exist for bleeding-edge Python.
+coincurve>=20.0.0; python_version < '3.13'
+protobuf>=3.20.0,<4.0.0
