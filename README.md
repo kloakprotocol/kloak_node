@@ -35,6 +35,20 @@ If you’re behind **CGNAT**, router port forwarding won’t work; you’ll need
 
 Kloak is a novel fungibility layer built on Kaspa - a decentralized, censorship resistant, non-custodial payjoin coordinator that transforms regular payments into privacy-enhanced transactions.
 
+## Privacy / Anonymity Tips
+
+Kloak improves on-chain ambiguity, but privacy also depends on wallet behavior and off-chain data (especially KYC). Practical tips as wallet users (not kloak node runners):
+
+- Avoid address reuse: always use fresh receive addresses when possible.
+- Be careful with UTXO combination: combining UTXOs from different sources can merge identities and undo prior privacy.
+- Avoid "big" consolidations: sweeping many UTXOs into one output can create an easy-to-follow cluster.
+- Separate identities: use different wallets (or clearly separated accounts) for different contexts instead of mixing funds.
+- Watch change behavior: change outputs that later recombine with known funds can reveal which output was change.
+- KYC deposits can link/stain coins: sending funds to an exchange or any KYC service can associate your identity with those UTXOs and downstream flows.
+- Consider network metadata: IP/timing correlations can leak information even if the transaction structure is privacy-enhanced.
+
+This is not legal advice and not a guarantee of anonymity; it’s guidance for reducing linkability.
+
 ## Features
 
 **Wallet Implementation**
