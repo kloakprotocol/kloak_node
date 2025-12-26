@@ -2195,70 +2195,71 @@ def node_sweep(client: RPCClient, wallet: KloakWallet, dest_addr: str, amount: f
     LOG.info(f"Constructing sweep transaction: {amount} KAS to {dest_addr}...")
     
     try:
-        # Sweep from the current pulse source address (where the node's funds sit).
-        idx = int(getattr(wallet, "pulse_source_index", 0) or 0)
-        if idx < 0 or idx >= len(wallet.addresses):
-            idx = 0
-        node_addr = wallet.addresses[idx]["address"]
-        balance = get_address_balance(client, node_addr)
-        utxos = get_utxos_by_address(client, node_addr)
-        
-        if balance < CONFIG["FUND_AMOUNT_KAS"] + amount:
-            LOG.error(f"Insufficient funds. Balance: {balance} KAS, need {CONFIG['FUND_AMOUNT_KAS'] + amount} KAS")
-            return None
-        
-        # Select UTXOs to cover amount (simple selection - use all)
-        selected_utxos = []
+        # Sweep can span the entire wallet: gather UTXOs from all derived addresses.
+        selected: list[tuple[dict, int]] = []  # (utxo, addr_index)
         total_input = 0
-        amount_sompi = int(amount * 100000000)
-        
-        for utxo in utxos:
-            try:
-                utxo_amount = int(utxo.get("utxoEntry", {}).get("amount", 0) or 0)
-            except Exception:
-                utxo_amount = 0
-            selected_utxos.append(utxo)
-            total_input += utxo_amount
-            
-            if total_input >= amount_sompi:
-                break
-        
-        if total_input < amount_sompi:
-            LOG.error(f"Insufficient UTXOs to cover {amount} KAS")
+        for addr_index, addr_info in enumerate(wallet.addresses):
+            addr = addr_info.get("address")
+            if not addr:
+                continue
+            utxos = get_utxos_by_address(client, addr)
+            if not utxos:
+                continue
+            for utxo in utxos:
+                try:
+                    utxo_amount = int(utxo.get("utxoEntry", {}).get("amount", 0) or 0)
+                except Exception:
+                    utxo_amount = 0
+                if utxo_amount <= 0:
+                    continue
+                selected.append((utxo, addr_index))
+                total_input += utxo_amount
+
+        if total_input <= 0 or not selected:
+            LOG.error("Sweep failed: no spendable UTXOs")
             return None
-        
+
+        amount_sompi = int(float(amount) * SOMPI_PER_KAS)
+        reserve_sompi = int(CONFIG["FUND_AMOUNT_KAS"] * SOMPI_PER_KAS)
+
+        fee_sompi = estimate_transaction_fee(client, num_inputs=len(selected), num_outputs=2, priority="normal")
+
+        if total_input < (amount_sompi + reserve_sompi + fee_sompi):
+            LOG.error(
+                "Insufficient funds. In=%s sompi, need amount+reserve+fee=%s sompi",
+                str(total_input),
+                str(int(amount_sompi + reserve_sompi + fee_sompi)),
+            )
+            return None
+
+        # Derive a fresh change address and keep the reserve there.
+        change_index, change_addr = wallet.get_next_unused_address(purpose="sweep_change")
+        wallet.mark_address_used(change_index, purpose="sweep_change")
+        wallet.pulse_source_index = int(change_index)
+
         # Build inputs
         inputs = []
-        for utxo in selected_utxos:
+        for utxo, _addr_index in selected:
             inputs.append({
                 "previousOutpoint": {
                     "transactionId": utxo.get("outpoint", {}).get("transactionId", ""),
                     "index": utxo.get("outpoint", {}).get("index", 0)
                 },
-                "signatureScript": "",  # Would sign with wallet private key
+                "signatureScript": "",
                 "sequence": 0,
                 "sigOpCount": 1
             })
-        
-        # Calculate outputs using network fee estimates
-        fee_sompi = estimate_transaction_fee(client, num_inputs=len(inputs), num_outputs=2, priority="normal")
-        
-        # Output to destination
-        output_to_dest = amount_sompi
-        
-        # Change back to node (keep reserve)
-        change_sompi = total_input - amount_sompi - fee_sompi
-        reserve_sompi = int(CONFIG["FUND_AMOUNT_KAS"] * 100000000)
-        
+
+        # Outputs: destination + change (which must be >= reserve)
+        output_to_dest = int(amount_sompi)
+        change_sompi = int(total_input) - int(output_to_dest) - int(fee_sompi)
         if change_sompi < reserve_sompi:
-            LOG.error(f"Would leave less than reserve amount. Aborting.")
+            LOG.error("Would leave less than reserve amount. Aborting.")
             return None
-        
-        # Convert addresses to script public keys
+
         dest_script = address_to_script_public_key(dest_addr)
-        node_script = address_to_script_public_key(node_addr)
-        
-        # Build outputs
+        change_script = address_to_script_public_key(change_addr)
+
         outputs = [
             {
                 "amount": int(output_to_dest),
@@ -2271,7 +2272,7 @@ def node_sweep(client: RPCClient, wallet: KloakWallet, dest_addr: str, amount: f
                 "amount": int(change_sompi),
                 "scriptPublicKey": {
                     "version": 0,
-                    "scriptPublicKey": node_script.hex()
+                    "scriptPublicKey": change_script.hex()
                 }
             }
         ]
@@ -2288,21 +2289,20 @@ def node_sweep(client: RPCClient, wallet: KloakWallet, dest_addr: str, amount: f
         }
         
         LOG.info(f"Signing sweep transaction with {len(inputs)} input(s)...")
-        
-        # Sign all inputs with node private key
-        node_priv_key = bytes.fromhex(wallet.addresses[idx]["private_key"])
-        
-        for i, utxo in enumerate(selected_utxos):
+
+        for i, (utxo, addr_index) in enumerate(selected):
             try:
                 utxo_amount = int(utxo.get("utxoEntry", {}).get("amount", 0) or 0)
             except Exception:
                 utxo_amount = 0
             spk_version, script_pubkey = get_utxo_script_pubkey(utxo)
-            
+            priv_key_hex = wallet.addresses[int(addr_index)]["private_key"]
+            priv_key = bytes.fromhex(priv_key_hex)
+
             sweep_tx = sign_kaspa_transaction_input(
                 sweep_tx,
                 input_index=i,
-                private_key=node_priv_key,
+                private_key=priv_key,
                 utxo_amount=utxo_amount,
                 script_pubkey=script_pubkey,
                 script_pubkey_version=spk_version,
@@ -2310,8 +2310,16 @@ def node_sweep(client: RPCClient, wallet: KloakWallet, dest_addr: str, amount: f
         
         LOG.info(f"Success: Sweep transaction signed")
         LOG.info(f"  Sweeping: {amount} KAS to {dest_addr}")
-        LOG.info(f"  Change: {change_sompi/100000000:.4f} KAS (reserve: {CONFIG['FUND_AMOUNT_KAS']} KAS)")
-        LOG.info(f"  Using {len(inputs)} input(s), fee: {fee_sompi/100000000:.4f} KAS")
+        LOG.info(f"  Change: {change_sompi / SOMPI_PER_KAS:.8f} KAS (reserve >= {CONFIG['FUND_AMOUNT_KAS']} KAS)")
+        LOG.info(f"  Change address [{change_index}]: {change_addr}")
+        LOG.info(f"  Using {len(inputs)} input(s), fee: {fee_sompi / SOMPI_PER_KAS:.8f} KAS")
+
+        # Best-effort persist wallet so the new change address + pulse_source_index survive restart.
+        try:
+            if wallet_passphrase:
+                threading.Thread(target=save_wallet, args=(wallet, wallet_passphrase), daemon=True).start()
+        except Exception:
+            pass
         
         # Broadcast the transaction
         tx_id = broadcast_transaction(client, sweep_tx)
@@ -2332,32 +2340,40 @@ def node_sweep(client: RPCClient, wallet: KloakWallet, dest_addr: str, amount: f
 def node_sweep_drain(client: RPCClient, wallet: KloakWallet, dest_addr: str):
     """Drain node funds to destination, leaving only the minimum reserve.
 
-    Sweeps ALL UTXOs from the node's current pulse source address, leaving
-    `CONFIG['FUND_AMOUNT_KAS']` behind (plus the required fee).
+    Sweeps ALL UTXOs owned by the entire wallet, leaving `CONFIG['FUND_AMOUNT_KAS']`
+    behind (plus the required fee) as change to a freshly-derived wallet address.
     """
     try:
-        idx = int(getattr(wallet, "pulse_source_index", 0) or 0)
-        if idx < 0 or idx >= len(wallet.addresses):
-            idx = 0
-        node_addr = wallet.addresses[idx]["address"]
-        utxos = get_utxos_by_address(client, node_addr)
-        if not utxos:
-            LOG.error("Sweep failed: no UTXOs")
+        selected: list[tuple[dict, int]] = []  # (utxo, addr_index)
+        total_input = 0
+        for addr_index, addr_info in enumerate(wallet.addresses):
+            addr = addr_info.get("address")
+            if not addr:
+                continue
+            utxos = get_utxos_by_address(client, addr)
+            if not utxos:
+                continue
+            for utxo in utxos:
+                try:
+                    utxo_amount = int(utxo.get("utxoEntry", {}).get("amount", 0) or 0)
+                except Exception:
+                    utxo_amount = 0
+                if utxo_amount <= 0:
+                    continue
+                selected.append((utxo, addr_index))
+                total_input += utxo_amount
+
+        if not selected or total_input <= 0:
+            LOG.error("Sweep failed: no spendable UTXOs")
             return None
 
-        # Spend *all* UTXOs so the wallet is drained (except reserve).
+        # Derive a fresh change address to hold the reserve (and keep the node operational).
+        change_index, change_addr = wallet.get_next_unused_address(purpose="sweep_change")
+        wallet.mark_address_used(change_index, purpose="sweep_change")
+        wallet.pulse_source_index = int(change_index)
+
         inputs = []
-        selected_utxos = []
-        total_input = 0
-        for utxo in utxos:
-            try:
-                utxo_amount = int(utxo.get("utxoEntry", {}).get("amount", 0) or 0)
-            except Exception:
-                utxo_amount = 0
-            if utxo_amount <= 0:
-                continue
-            selected_utxos.append(utxo)
-            total_input += utxo_amount
+        for utxo, _addr_index in selected:
             inputs.append({
                 "previousOutpoint": {
                     "transactionId": utxo.get("outpoint", {}).get("transactionId", ""),
@@ -2387,7 +2403,7 @@ def node_sweep_drain(client: RPCClient, wallet: KloakWallet, dest_addr: str):
             return None
 
         dest_script = address_to_script_public_key(dest_addr)
-        node_script = address_to_script_public_key(node_addr)
+        change_script = address_to_script_public_key(change_addr)
 
         outputs = [
             {
@@ -2401,7 +2417,7 @@ def node_sweep_drain(client: RPCClient, wallet: KloakWallet, dest_addr: str):
                 "amount": int(reserve_sompi),
                 "scriptPublicKey": {
                     "version": 0,
-                    "scriptPublicKey": node_script.hex()
+                    "scriptPublicKey": change_script.hex()
                 }
             }
         ]
@@ -2417,17 +2433,18 @@ def node_sweep_drain(client: RPCClient, wallet: KloakWallet, dest_addr: str):
         }
 
         LOG.info(f"Signing drain-sweep transaction with {len(inputs)} input(s)...")
-        node_priv_key = bytes.fromhex(wallet.addresses[idx]["private_key"])
-        for i, utxo in enumerate(selected_utxos):
+        for i, (utxo, addr_index) in enumerate(selected):
             try:
                 utxo_amount = int(utxo.get("utxoEntry", {}).get("amount", 0) or 0)
             except Exception:
                 utxo_amount = 0
             spk_version, script_pubkey = get_utxo_script_pubkey(utxo)
+            priv_key_hex = wallet.addresses[int(addr_index)]["private_key"]
+            priv_key = bytes.fromhex(priv_key_hex)
             sweep_tx = sign_kaspa_transaction_input(
                 sweep_tx,
                 input_index=i,
-                private_key=node_priv_key,
+                private_key=priv_key,
                 utxo_amount=utxo_amount,
                 script_pubkey=script_pubkey,
                 script_pubkey_version=spk_version,
@@ -2438,6 +2455,14 @@ def node_sweep_drain(client: RPCClient, wallet: KloakWallet, dest_addr: str):
         LOG.info(f"  Reserve kept: {reserve_sompi / SOMPI_PER_KAS:.8f} KAS")
         LOG.info(f"  Swept: {output_to_dest / SOMPI_PER_KAS:.8f} KAS")
         LOG.info(f"  Fee: {fee_sompi / SOMPI_PER_KAS:.8f} KAS")
+        LOG.info(f"  Reserve/change address [{change_index}]: {change_addr}")
+
+        # Best-effort persist wallet so the new change address + pulse_source_index survive restart.
+        try:
+            if wallet_passphrase:
+                threading.Thread(target=save_wallet, args=(wallet, wallet_passphrase), daemon=True).start()
+        except Exception:
+            pass
 
         tx_id = broadcast_transaction(client, sweep_tx)
         if tx_id:

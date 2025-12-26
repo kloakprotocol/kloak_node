@@ -164,7 +164,7 @@ When the node is running, you can type commands into the console (type `help` to
 |---------|-------------|
 | `help` | Show available operator commands |
 | `pulse` | Trigger an immediate pulse |
-| `sweep <address>` | Drain all funds to address (keeps minimum reserve) |
+| `sweep <address>` | Sweep all wallet UTXOs to address (keeps minimum reserve as change to a newly derived internal address) |
 | `status` | Show node + wallet status |
 | `balance` | Show wallet balance summary |
 | `fundaddr` | Show the current funding address (+ funding QR if available) |
@@ -286,7 +286,7 @@ await prep["finalize"](transaction_id=txid, error=None if txid else "broadcast_f
 
 ## Development Status
 
-> estimated ~75% node functionality/completion. Not fully production ready, need more R&D
+> estimated ~70% node functionality/completion. Not fully production ready, need more R&D
 
 ## License
 
